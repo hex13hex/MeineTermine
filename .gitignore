@@ -1,0 +1,21 @@
+# Gradle and build output
+.gradle/
+build/
+**/build/
+
+# Local Android SDK configuration
+local.properties
+
+# Android Studio / IntelliJ
+.idea/
+*.iml
+
+# Native build output
+.externalNativeBuild/
+.cxx/
+
+# Signing keys and generated packages
+*.jks
+*.keystore
+*.apk
+*.aab

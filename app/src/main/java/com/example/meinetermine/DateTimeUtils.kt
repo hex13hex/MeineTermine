@@ -20,6 +20,19 @@ object DateTimeUtils {
     fun isPast(date: String, time: String): Boolean =
         (toEpochMillis(date, time) ?: 0L) <= System.currentTimeMillis()
 
+    /**
+     * Returns occurrences on the weekday of [firstDate] for the next two
+     * calendar months. The selected date is the first occurrence.
+     */
+    fun weeklyOccurrences(firstDate: String): List<String> = runCatching {
+        val start = LocalDate.parse(firstDate, dateFormatter)
+        val endExclusive = start.plusMonths(2)
+        generateSequence(start) { it.plusWeeks(1) }
+            .takeWhile { it.isBefore(endExclusive) }
+            .map { it.format(dateFormatter) }
+            .toList()
+    }.getOrDefault(emptyList())
+
     fun section(date: String): String {
         val appointmentDate = runCatching { LocalDate.parse(date, dateFormatter) }.getOrNull()
             ?: return "Other"

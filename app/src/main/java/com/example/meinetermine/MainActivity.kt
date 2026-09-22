@@ -338,110 +338,72 @@ fun App(dao: TerminDao) {
                 editingTermin = null
             },
 
-            onSave = { newTermin ->
+            onSave = { newTermin, terminType ->
 
                 kotlinx.coroutines.CoroutineScope(
                     kotlinx.coroutines.Dispatchers.IO
                 ).launch {
 
-                    val excludeId = editingTermin?.id ?: 0L
-
-                    val existingTermine = dao.getTermineForDate(
-                        date = newTermin.date,
-                        excludeId = excludeId
-                    )
-
-                    val conflict = isTimeConflict(
-                        newTime = newTermin.time,
-                        existingTimes = existingTermine.map { it.time }
-                    )
-
-                    val foundConflict = existingTermine.firstOrNull { existing ->
-                        isTimeConflict(
-                            newTime = newTermin.time,
-                            existingTimes = listOf(existing.time)
-                        )
-                    }
-
-                    kotlinx.coroutines.withContext(
-                        kotlinx.coroutines.Dispatchers.Main
-                    ) {
-
-                        if (conflict) {
-
-                            conflictingTermin = foundConflict
-
-                        } else {
-
-                            kotlinx.coroutines.CoroutineScope(
-                                kotlinx.coroutines.Dispatchers.IO
-                            ).launch {
-
-                                if (editingTermin == null) {
-
-                                    val newId = dao.insert(newTermin)
-                                    statisticsStore.addCreated(1)
-
-                                    val savedTermin = newTermin.copy(
-                                        id = newId
+                    val editedTermin = editingTermin
+                    val termineToSave = when {
+                        editedTermin != null -> listOf(newTermin.copy(id = editedTermin.id))
+                        terminType == TerminType.RECURRING ->
+                            DateTimeUtils.weeklyOccurrences(newTermin.date).mapNotNull { date ->
+                                DateTimeUtils.toEpochMillis(date, newTermin.time)?.let { scheduledAtMillis ->
+                                    newTermin.copy(
+                                        date = date,
+                                        scheduledAtMillis = scheduledAtMillis
                                     )
-
-                                    val alarmManager =
-                                        context.getSystemService(Context.ALARM_SERVICE) as android.app.AlarmManager
-
-                                    if (
-                                        android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S &&
-                                        !alarmManager.canScheduleExactAlarms()
-                                    ) {
-                                        openExactAlarmSettings(context)
-                                    } else {
-                                        ReminderScheduler.scheduleReminders(
-                                            context,
-                                            savedTermin
-                                        )
-                                        ReminderScheduler.scheduleAutoDelete(
-                                            context,
-                                            savedTermin
-                                        )
-                                    }
-
-                                } else {
-
-                                    val updatedTermin = newTermin.copy(
-                                        id = editingTermin!!.id
-                                    )
-
-                                    ReminderScheduler.cancelReminders(
-                                        context,
-                                        updatedTermin.id
-                                    )
-
-                                    ReminderScheduler.cancelAutoDelete(
-                                        context,
-                                        updatedTermin.id
-                                    )
-
-                                    dao.update(updatedTermin)
-
-                                    ReminderScheduler.scheduleReminders(
-                                        context,
-                                        updatedTermin
-                                    )
-
-                                    ReminderScheduler.scheduleAutoDelete(
-                                        context,
-                                        updatedTermin
-                                    )
-                                }
-
-                                kotlinx.coroutines.withContext(
-                                    kotlinx.coroutines.Dispatchers.Main
-                                ) {
-                                    showAddScreen = false
-                                    editingTermin = null
                                 }
                             }
+                        else -> listOf(newTermin)
+                    }
+
+                    val conflict = termineToSave.firstNotNullOfOrNull { candidate ->
+                        dao.getTermineForDate(candidate.date, editedTermin?.id ?: 0L)
+                            .firstOrNull { existing ->
+                                isTimeConflict(candidate.time, listOf(existing.time))
+                            }
+                    }
+
+                    if (conflict != null) {
+                        withContext(Dispatchers.Main) {
+                            conflictingTermin = conflict
                         }
+                        return@launch
+                    }
+
+                    if (editedTermin != null) {
+                        val updatedTermin = termineToSave.single()
+                        ReminderScheduler.cancelReminders(context, updatedTermin.id)
+                        ReminderScheduler.cancelAutoDelete(context, updatedTermin.id)
+                        dao.update(updatedTermin)
+                        ReminderScheduler.scheduleReminders(context, updatedTermin)
+                        ReminderScheduler.scheduleAutoDelete(context, updatedTermin)
+                    } else {
+                        val alarmManager = context.getSystemService(Context.ALARM_SERVICE)
+                                as android.app.AlarmManager
+                        val needsExactAlarmPermission =
+                            android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S &&
+                                    !alarmManager.canScheduleExactAlarms()
+
+                        termineToSave.forEach { termin ->
+                            val savedTermin = termin.copy(id = dao.insert(termin))
+                            if (!needsExactAlarmPermission) {
+                                ReminderScheduler.scheduleReminders(context, savedTermin)
+                                ReminderScheduler.scheduleAutoDelete(context, savedTermin)
+                            }
+                        }
+                        statisticsStore.addCreated(termineToSave.size)
+
+                        withContext(Dispatchers.Main) {
+                            if (needsExactAlarmPermission) openExactAlarmSettings(context)
+                        }
+                    }
+
+                    withContext(Dispatchers.Main) {
+                        showAddScreen = false
+                        editingTermin = null
                     }
                 }
             }
@@ -1212,12 +1174,13 @@ fun TerminCard(
 fun AddTerminScreen(
     terminToEdit: TerminEntity?,
     onBack: () -> Unit,
-    onSave: (TerminEntity) -> Unit
+    onSave: (TerminEntity, TerminType) -> Unit
 ) {
 
     var date by remember { mutableStateOf(terminToEdit?.date ?: "") }
     var time by remember { mutableStateOf(terminToEdit?.time ?: "") }
     var description by remember { mutableStateOf(terminToEdit?.description ?: "") }
+    var terminType by remember { mutableStateOf(TerminType.SINGLE) }
 
     val context = LocalContext.current
 
@@ -1260,6 +1223,69 @@ fun AddTerminScreen(
                 .padding(innerPadding)
                 .padding(16.dp)
         ) {
+
+            if (terminToEdit == null) {
+                Text(
+                    text = "Тип термина",
+                    style = MaterialTheme.typography.titleMedium
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = { terminType = TerminType.SINGLE },
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            containerColor = if (terminType == TerminType.SINGLE) {
+                                Color(0xFFD50000)
+                            } else {
+                                MaterialTheme.colorScheme.surface
+                            },
+                            contentColor = if (terminType == TerminType.SINGLE) {
+                                Color.White
+                            } else {
+                                MaterialTheme.colorScheme.onSurface
+                            }
+                        )
+                    ) {
+                        Text("Одиночный")
+                    }
+
+                    OutlinedButton(
+                        onClick = { terminType = TerminType.RECURRING },
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            containerColor = if (terminType == TerminType.RECURRING) {
+                                Color(0xFFD50000)
+                            } else {
+                                MaterialTheme.colorScheme.surface
+                            },
+                            contentColor = if (terminType == TerminType.RECURRING) {
+                                Color.White
+                            } else {
+                                MaterialTheme.colorScheme.onSurface
+                            }
+                        )
+                    ) {
+                        Text("Повторяемый")
+                    }
+                }
+
+                if (terminType == TerminType.RECURRING) {
+                    Text(
+                        text = "Будет создан термин каждую неделю в течение двух месяцев.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 8.dp)
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(20.dp))
+            }
 
             // ДАТА
 
@@ -1407,7 +1433,8 @@ fun AddTerminScreen(
                                 time = time,
                                 scheduledAtMillis = DateTimeUtils.toEpochMillis(date, time) ?: return@Button,
                                 description = description.trim()
-                            )
+                            ),
+                            terminType
                         )
                     }
                 },

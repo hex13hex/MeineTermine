@@ -81,6 +81,9 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.EventAvailable
+import android.net.ConnectivityManager
+import android.net.Network
+import android.app.Activity
 
 fun isTimeConflict(
     newTime: String,
@@ -111,6 +114,7 @@ fun isTimeConflict(
 class MainActivity : ComponentActivity() {
 
     private lateinit var database: TerminDatabase
+    var googleDriveResultCallback: ((Boolean) -> Unit)? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -135,6 +139,26 @@ class MainActivity : ComponentActivity() {
         setContent {
             MeineTermineTheme {
                 App(database.terminDao())
+            }
+        }
+    }
+
+    override fun onActivityResult(
+        requestCode: Int,
+        resultCode: Int,
+        data: Intent?
+    ) {
+        super.onActivityResult(requestCode, resultCode, data)
+
+        if (requestCode == GoogleDriveAuth.REQUEST_CODE_AUTH) {
+
+            GoogleDriveAuth().handleAuthorizationResult(
+                this,
+                data
+            ) { connected ->
+
+                googleDriveResultCallback?.invoke(connected)
+                googleDriveResultCallback = null
             }
         }
     }
@@ -178,8 +202,45 @@ fun App(dao: TerminDao) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
 
+    val connectivityManager =
+        context.getSystemService(Context.CONNECTIVITY_SERVICE)
+                as ConnectivityManager
+
+    var googleDriveConnected by remember {
+        mutableStateOf(false)
+    }
+
     var autoStartAllowed by remember {
         mutableStateOf(true)
+    }
+
+    DisposableEffect(connectivityManager) {
+
+        val networkCallback = object : ConnectivityManager.NetworkCallback() {
+
+            override fun onLost(network: Network) {
+                googleDriveConnected = false
+            }
+
+            override fun onAvailable(network: Network) {
+
+                GoogleDriveAuth().checkDriveAccess(context as Activity) { connected ->
+                    googleDriveConnected = connected
+                }
+            }
+        }
+
+        connectivityManager.registerDefaultNetworkCallback(networkCallback)
+
+        onDispose {
+            connectivityManager.unregisterNetworkCallback(networkCallback)
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        GoogleDriveAuth().checkDriveAccess(context as android.app.Activity) { connected ->
+            googleDriveConnected = connected
+        }
     }
 
     DisposableEffect(lifecycleOwner) {
@@ -421,6 +482,7 @@ fun App(dao: TerminDao) {
 
         TerminListScreen(
             termine = termine,
+            googleDriveConnected = googleDriveConnected,
 
             onAddClick = {
                 editingTermin = null
@@ -464,6 +526,21 @@ fun App(dao: TerminDao) {
 
             onStatisticsClick = {
                 showStatisticsScreen = true
+            },
+
+            onGoogleDriveClick = {
+
+                val activity = context as android.app.Activity
+
+                (activity as MainActivity).googleDriveResultCallback = { connected ->
+                    googleDriveConnected = connected
+                }
+
+                GoogleDriveAuth().requestDriveAccess(
+                    activity
+                ) { connected ->
+                    googleDriveConnected = connected
+                }
             }
         )
     }
@@ -677,13 +754,15 @@ fun StatisticsMetricCard(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TerminListScreen(
+    googleDriveConnected: Boolean,
     termine: List<TerminEntity>,
     onAddClick: () -> Unit,
     onEdit: (TerminEntity) -> Unit,
     onDelete: (TerminEntity) -> Unit,
     onExportClick: () -> Unit,
     onImportClick: () -> Unit,
-    onStatisticsClick: () -> Unit
+    onStatisticsClick: () -> Unit,
+    onGoogleDriveClick: () -> Unit,
 ) {
 
     Scaffold(
@@ -764,6 +843,18 @@ fun TerminListScreen(
                                 )
                             }
                         )
+
+                        if (!googleDriveConnected) {
+                            DropdownMenuItem(
+                                text = {
+                                    Text("Подключить Google Drive")
+                                },
+                                onClick = {
+                                    menuExpanded = false
+                                    onGoogleDriveClick()
+                                }
+                            )
+                        }
                     }
                 }
             )
@@ -827,6 +918,19 @@ fun TerminListScreen(
                     .padding(innerPadding)
                     .padding(16.dp)
             ) {
+
+                if (googleDriveConnected) {
+                    item {
+                        Text(
+                            text = "Google Drive подключён",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = Color.Gray,
+                            modifier = Modifier.padding(
+                                bottom = 12.dp
+                            )
+                        )
+                    }
+                }
 
                 if (todayTermine.isNotEmpty()) {
 

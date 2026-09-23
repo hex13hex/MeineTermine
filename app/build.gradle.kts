@@ -10,6 +10,13 @@ android {
         version = release(37)
     }
 
+    packaging {
+        resources {
+            excludes += "/META-INF/INDEX.LIST"
+            excludes += "/META-INF/DEPENDENCIES"
+        }
+    }
+
     defaultConfig {
         applicationId = "com.example.meinetermine"
         minSdk = 24
@@ -61,4 +68,11 @@ dependencies {
     implementation(libs.androidx.room.ktx)
     ksp("androidx.room:room-compiler:2.8.3")
     implementation("com.google.code.gson:gson:2.13.1")
+    implementation(libs.androidx.work.runtime.ktx)
+    implementation("androidx.credentials:credentials:1.5.0")
+    implementation("androidx.credentials:credentials-play-services-auth:1.5.0")
+    implementation("com.google.android.libraries.identity.googleid:googleid:1.1.1")
+    implementation("com.google.android.gms:play-services-auth:21.4.0")
+    implementation("com.google.api-client:google-api-client-android:2.8.1")
+    implementation("com.google.apis:google-api-services-drive:v3-rev20260901-2.0.0")
 }

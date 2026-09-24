@@ -15,6 +15,7 @@ import com.google.api.services.drive.Drive
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
 
 class GoogleDriveAuth {
 
@@ -262,5 +263,70 @@ class GoogleDriveAuth {
                 }
             }
         }
+    }
+
+    fun getAccessToken(
+        activity: Activity,
+        onResult: (String?) -> Unit
+    ) {
+        val request = AuthorizationRequest.builder()
+            .setRequestedScopes(
+                listOf(
+                    Scope(DRIVE_FILE_SCOPE)
+                )
+            )
+            .build()
+
+        Identity
+            .getAuthorizationClient(activity)
+            .authorize(request)
+            .addOnSuccessListener { result ->
+
+                if (
+                    result.hasResolution() ||
+                    result.accessToken.isNullOrEmpty()
+                ) {
+                    onResult(null)
+                    return@addOnSuccessListener
+                }
+
+                onResult(result.accessToken)
+            }
+            .addOnFailureListener {
+
+                onResult(null)
+            }
+    }
+
+    suspend fun getAccessTokenSilently(
+        context: Context
+    ): String? = suspendCancellableCoroutine { continuation ->
+
+        val request = AuthorizationRequest.builder()
+            .setRequestedScopes(
+                listOf(
+                    Scope(DRIVE_FILE_SCOPE)
+                )
+            )
+            .build()
+
+        Identity
+            .getAuthorizationClient(context)
+            .authorize(request)
+            .addOnSuccessListener { result ->
+
+                if (
+                    result.hasResolution() ||
+                    result.accessToken.isNullOrEmpty()
+                ) {
+                    continuation.resume(null, onCancellation = null)
+                } else {
+                    continuation.resume(result.accessToken, onCancellation = null)
+                }
+            }
+            .addOnFailureListener {
+
+                continuation.resume(null, onCancellation = null)
+            }
     }
 }

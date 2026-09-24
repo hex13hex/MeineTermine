@@ -35,6 +35,8 @@ class BootReceiver : BroadcastReceiver() {
                 TerminMaintenance.migrateLegacyTimestamps(dao)
                 val termine = dao.getAll()
 
+                BackupScheduler.schedule(context)
+
                 // Автоудаление термина
                 val deleteAfterMillis = AppConfig.AUTO_DELETE_AFTER_MILLIS
 

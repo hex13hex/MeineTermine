@@ -35,4 +35,7 @@ object AppConfig {
     // По этому префиксу приложение отличает
     // свои backup-файлы от других файлов в папке.
     const val DRIVE_BACKUP_FILE_PREFIX = "termin_backup_"
+
+    // Интервал автоматического резервного копирования в гугл драйв
+    const val BACKUP_INTERVAL_MINUTES = 30L
 }

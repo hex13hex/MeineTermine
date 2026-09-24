@@ -84,6 +84,7 @@ import androidx.compose.material.icons.filled.EventAvailable
 import android.net.ConnectivityManager
 import android.net.Network
 import android.app.Activity
+import android.widget.Toast
 
 fun isTimeConflict(
     newTime: String,
@@ -118,6 +119,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        BackupScheduler.schedule(applicationContext)
 
         database = TerminDatabase.getDatabase(this)
 
@@ -541,7 +544,50 @@ fun App(dao: TerminDao) {
                 ) { connected ->
                     googleDriveConnected = connected
                 }
-            }
+            },
+
+            onGoogleDriveBackupClick = {
+                val activity = context as android.app.Activity
+
+                GoogleDriveAuth().getAccessToken(
+                    activity
+                ) { accessToken ->
+
+                    if (accessToken == null) {
+                        Toast.makeText(
+                            activity,
+                            "Не удалось получить доступ к Google Drive",
+                            Toast.LENGTH_LONG
+                        ).show()
+
+                        return@getAccessToken
+                    }
+
+                    kotlinx.coroutines.CoroutineScope(
+                        kotlinx.coroutines.Dispatchers.IO
+                    ).launch {
+
+                        val success =
+                            GoogleDriveBackup.createBackup(
+                                dao = dao,
+                                accessToken = accessToken
+                            )
+
+                        activity.runOnUiThread {
+
+                            Toast.makeText(
+                                activity,
+                                if (success) {
+                                    "Резервная копия сохранена"
+                                } else {
+                                    "Ошибка резервного копирования"
+                                },
+                                Toast.LENGTH_LONG
+                            ).show()
+                        }
+                    }
+                }
+            },
         )
     }
 
@@ -763,6 +809,7 @@ fun TerminListScreen(
     onImportClick: () -> Unit,
     onStatisticsClick: () -> Unit,
     onGoogleDriveClick: () -> Unit,
+    onGoogleDriveBackupClick: () -> Unit,
 ) {
 
     Scaffold(
@@ -852,6 +899,16 @@ fun TerminListScreen(
                                 onClick = {
                                     menuExpanded = false
                                     onGoogleDriveClick()
+                                }
+                            )
+                        }
+
+                        if (googleDriveConnected) {
+                            DropdownMenuItem(
+                                text = { Text("Создать резервную копию") },
+                                onClick = {
+                                    menuExpanded = false
+                                    onGoogleDriveBackupClick()
                                 }
                             )
                         }

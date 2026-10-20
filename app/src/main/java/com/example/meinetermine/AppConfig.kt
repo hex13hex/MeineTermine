@@ -25,10 +25,6 @@ object AppConfig {
     const val TERMIN_DURATION_MILLIS =
         1L * 60 * 60 * 1000
 
-    // Интервал автоматического backup в Google Drive.
-    // Сейчас: каждые 3 часа.
-    const val DRIVE_BACKUP_INTERVAL_HOURS = 3L
-
     // Сколько последних backup-файлов хранить.
     const val DRIVE_BACKUP_MAX_FILES = 5
 
@@ -36,6 +32,8 @@ object AppConfig {
     // свои backup-файлы от других файлов в папке.
     const val DRIVE_BACKUP_FILE_PREFIX = "termin_backup_"
 
-    // Интервал автоматического резервного копирования в гугл драйв
+    // Интервал автоматического резервного копирования в Google Drive.
+    // WorkManager выполняет периодические задачи приблизительно: система может
+    // отложить запуск для экономии батареи или при отсутствии сети.
     const val BACKUP_INTERVAL_MINUTES = 30L
 }

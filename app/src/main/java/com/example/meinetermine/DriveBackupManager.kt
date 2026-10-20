@@ -4,27 +4,16 @@ import android.content.Context
 import android.net.Uri
 import android.provider.DocumentsContract
 import android.provider.OpenableColumns
-import androidx.work.Constraints
-import androidx.work.ExistingPeriodicWorkPolicy
-import androidx.work.ExistingWorkPolicy
-import androidx.work.NetworkType
-import androidx.work.OneTimeWorkRequestBuilder
-import androidx.work.PeriodicWorkRequestBuilder
-import androidx.work.WorkManager
 import java.io.IOException
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
-import java.util.concurrent.TimeUnit
 
 object DriveBackupManager {
 
     private const val PREFERENCES_NAME = "drive_backup"
     private const val FOLDER_URI_KEY = "folder_uri"
-
-    private const val PERIODIC_WORK_NAME = "drive_backup_periodic"
-    private const val IMMEDIATE_WORK_NAME = "drive_backup_immediate"
 
     fun isConfigured(context: Context): Boolean {
         return getFolderUri(context) != null
@@ -56,8 +45,8 @@ object DriveBackupManager {
             .putString(FOLDER_URI_KEY, uri.toString())
             .apply()
 
-        schedulePeriodicBackup(context)
-        enqueueImmediateBackup(context)
+        BackupScheduler.schedule(context)
+        BackupScheduler.enqueueImmediate(context)
     }
 
     fun clearFolder(context: Context) {
@@ -87,16 +76,7 @@ object DriveBackupManager {
             .remove(FOLDER_URI_KEY)
             .apply()
 
-        val workManager =
-            WorkManager.getInstance(context)
-
-        workManager.cancelUniqueWork(
-            PERIODIC_WORK_NAME
-        )
-
-        workManager.cancelUniqueWork(
-            IMMEDIATE_WORK_NAME
-        )
+        BackupScheduler.cancel(context)
     }
 
     fun getFolderName(context: Context): String {
@@ -131,67 +111,6 @@ object DriveBackupManager {
         }
     }
 
-    fun schedulePeriodicBackup(
-        context: Context
-    ) {
-
-        if (!isConfigured(context)) {
-            return
-        }
-
-        val constraints =
-            Constraints.Builder()
-                .setRequiredNetworkType(
-                    NetworkType.CONNECTED
-                )
-                .build()
-
-        val request =
-            PeriodicWorkRequestBuilder<DriveBackupWorker>(
-                AppConfig.DRIVE_BACKUP_INTERVAL_HOURS,
-                TimeUnit.HOURS
-            )
-                .setConstraints(constraints)
-                .build()
-
-        WorkManager
-            .getInstance(context)
-            .enqueueUniquePeriodicWork(
-                PERIODIC_WORK_NAME,
-                ExistingPeriodicWorkPolicy.UPDATE,
-                request
-            )
-    }
-
-    fun enqueueImmediateBackup(
-        context: Context
-    ) {
-
-        if (!isConfigured(context)) {
-            return
-        }
-
-        val constraints =
-            Constraints.Builder()
-                .setRequiredNetworkType(
-                    NetworkType.CONNECTED
-                )
-                .build()
-
-        val request =
-            OneTimeWorkRequestBuilder<DriveBackupWorker>()
-                .setConstraints(constraints)
-                .build()
-
-        WorkManager
-            .getInstance(context)
-            .enqueueUniqueWork(
-                IMMEDIATE_WORK_NAME,
-                ExistingWorkPolicy.REPLACE,
-                request
-            )
-    }
-
     suspend fun performBackup(
         context: Context
     ) {
@@ -217,9 +136,15 @@ object DriveBackupManager {
         val resolver =
             context.contentResolver
 
+        val directoryId = DocumentsContract.getTreeDocumentId(treeUri)
+        val folderDocumentUri = DocumentsContract.buildDocumentUriUsingTree(
+            treeUri,
+            directoryId
+        )
+
         ensureDirectorySupportsCreate(
             resolver,
-            treeUri
+            folderDocumentUri
         )
 
         var createdFile: Uri? = null
@@ -229,7 +154,7 @@ object DriveBackupManager {
             createdFile =
                 DocumentsContract.createDocument(
                     resolver,
-                    treeUri,
+                    folderDocumentUri,
                     "text/csv",
                     fileName
                 )

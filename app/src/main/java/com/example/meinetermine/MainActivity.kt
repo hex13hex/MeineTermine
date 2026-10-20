@@ -81,9 +81,6 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.EventAvailable
-import android.net.ConnectivityManager
-import android.net.Network
-import android.app.Activity
 import android.widget.Toast
 
 fun isTimeConflict(
@@ -115,7 +112,6 @@ fun isTimeConflict(
 class MainActivity : ComponentActivity() {
 
     private lateinit var database: TerminDatabase
-    var googleDriveResultCallback: ((Boolean) -> Unit)? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -142,26 +138,6 @@ class MainActivity : ComponentActivity() {
         setContent {
             MeineTermineTheme {
                 App(database.terminDao())
-            }
-        }
-    }
-
-    override fun onActivityResult(
-        requestCode: Int,
-        resultCode: Int,
-        data: Intent?
-    ) {
-        super.onActivityResult(requestCode, resultCode, data)
-
-        if (requestCode == GoogleDriveAuth.REQUEST_CODE_AUTH) {
-
-            GoogleDriveAuth().handleAuthorizationResult(
-                this,
-                data
-            ) { connected ->
-
-                googleDriveResultCallback?.invoke(connected)
-                googleDriveResultCallback = null
             }
         }
     }
@@ -205,45 +181,12 @@ fun App(dao: TerminDao) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
 
-    val connectivityManager =
-        context.getSystemService(Context.CONNECTIVITY_SERVICE)
-                as ConnectivityManager
-
     var googleDriveConnected by remember {
-        mutableStateOf(false)
+        mutableStateOf(DriveBackupManager.isConfigured(context))
     }
 
     var autoStartAllowed by remember {
         mutableStateOf(true)
-    }
-
-    DisposableEffect(connectivityManager) {
-
-        val networkCallback = object : ConnectivityManager.NetworkCallback() {
-
-            override fun onLost(network: Network) {
-                googleDriveConnected = false
-            }
-
-            override fun onAvailable(network: Network) {
-
-                GoogleDriveAuth().checkDriveAccess(context as Activity) { connected ->
-                    googleDriveConnected = connected
-                }
-            }
-        }
-
-        connectivityManager.registerDefaultNetworkCallback(networkCallback)
-
-        onDispose {
-            connectivityManager.unregisterNetworkCallback(networkCallback)
-        }
-    }
-
-    LaunchedEffect(Unit) {
-        GoogleDriveAuth().checkDriveAccess(context as android.app.Activity) { connected ->
-            googleDriveConnected = connected
-        }
     }
 
     DisposableEffect(lifecycleOwner) {
@@ -356,15 +299,19 @@ fun App(dao: TerminDao) {
 
         if (uri != null) {
 
-            val json = context.contentResolver
+            val backupContent = context.contentResolver
                 .openInputStream(uri)
                 ?.bufferedReader()
                 ?.use { it.readText() }
 
-            if (json != null) {
+            if (backupContent != null) {
 
                 val parsedTermine = try {
-                    BackupManager.parseJson(json)
+                    if (backupContent.trimStart().startsWith("[")) {
+                        BackupManager.parseJson(backupContent)
+                    } else {
+                        BackupManager.parseCsv(backupContent)
+                    }
                 } catch (e: Exception) {
                     importError = true
                     null
@@ -389,6 +336,33 @@ fun App(dao: TerminDao) {
 
                 importedTermine = termineToInsert
             }
+        }
+    }
+
+    val driveFolderLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocumentTree()
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+
+        val permissionFlags =
+            Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+
+        runCatching {
+            context.contentResolver.takePersistableUriPermission(uri, permissionFlags)
+            DriveBackupManager.saveFolderUri(context.applicationContext, uri)
+        }.onSuccess {
+            googleDriveConnected = true
+            Toast.makeText(
+                context,
+                "Папка Google Drive подключена. Создана первая резервная копия.",
+                Toast.LENGTH_LONG
+            ).show()
+        }.onFailure {
+            Toast.makeText(
+                context,
+                "Не удалось сохранить доступ к папке Google Drive.",
+                Toast.LENGTH_LONG
+            ).show()
         }
     }
 
@@ -523,7 +497,7 @@ fun App(dao: TerminDao) {
 
             onImportClick = {
                 importLauncher.launch(
-                    arrayOf("application/json")
+                    arrayOf("application/json", "text/csv", "text/comma-separated-values")
                 )
             },
 
@@ -532,61 +506,16 @@ fun App(dao: TerminDao) {
             },
 
             onGoogleDriveClick = {
-
-                val activity = context as android.app.Activity
-
-                (activity as MainActivity).googleDriveResultCallback = { connected ->
-                    googleDriveConnected = connected
-                }
-
-                GoogleDriveAuth().requestDriveAccess(
-                    activity
-                ) { connected ->
-                    googleDriveConnected = connected
-                }
+                driveFolderLauncher.launch(null)
             },
 
             onGoogleDriveBackupClick = {
-                val activity = context as android.app.Activity
-
-                GoogleDriveAuth().getAccessToken(
-                    activity
-                ) { accessToken ->
-
-                    if (accessToken == null) {
-                        Toast.makeText(
-                            activity,
-                            "Не удалось получить доступ к Google Drive",
-                            Toast.LENGTH_LONG
-                        ).show()
-
-                        return@getAccessToken
-                    }
-
-                    kotlinx.coroutines.CoroutineScope(
-                        kotlinx.coroutines.Dispatchers.IO
-                    ).launch {
-
-                        val success =
-                            GoogleDriveBackup.createBackup(
-                                dao = dao,
-                                accessToken = accessToken
-                            )
-
-                        activity.runOnUiThread {
-
-                            Toast.makeText(
-                                activity,
-                                if (success) {
-                                    "Резервная копия сохранена"
-                                } else {
-                                    "Ошибка резервного копирования"
-                                },
-                                Toast.LENGTH_LONG
-                            ).show()
-                        }
-                    }
-                }
+                BackupScheduler.enqueueImmediate(context.applicationContext)
+                Toast.makeText(
+                    context,
+                    "Резервная копия будет создана при наличии интернета.",
+                    Toast.LENGTH_SHORT
+                ).show()
             },
         )
     }
@@ -894,7 +823,7 @@ fun TerminListScreen(
                         if (!googleDriveConnected) {
                             DropdownMenuItem(
                                 text = {
-                                    Text("Подключить Google Drive")
+                                    Text("Выбрать папку Google Drive")
                                 },
                                 onClick = {
                                     menuExpanded = false

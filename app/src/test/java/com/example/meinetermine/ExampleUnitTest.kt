@@ -27,4 +27,16 @@ class ExampleUnitTest {
             occurrences
         )
     }
+
+    @Test
+    fun parseCsv_readsAutomaticDriveBackupAndEscapedDescription() {
+        val backup = BackupManager.parseCsv(
+            "\"id\",\"date\",\"time\",\"scheduled_at_millis\",\"description\"\r\n" +
+                    "\"42\",\"20.10.2026\",\"15:00\",\"1792501200000\",\"Врач, \"\"кабинет 3\"\"\"\r\n"
+        )
+
+        assertEquals(1, backup.size)
+        assertEquals(42L, backup.single().id)
+        assertEquals("Врач, \"кабинет 3\"", backup.single().description)
+    }
 }

@@ -1,8 +1,6 @@
 package com.example.meinetermine
 
 import android.content.Context
-import android.net.ConnectivityManager
-import android.net.NetworkCapabilities
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 
@@ -13,55 +11,20 @@ class BackupWorker(
 
     override suspend fun doWork(): Result {
 
-        // Проверяем наличие интернета.
-        val connectivityManager =
-            applicationContext.getSystemService(
-                Context.CONNECTIVITY_SERVICE
-            ) as ConnectivityManager
-
-        val network =
-            connectivityManager.activeNetwork
-
-        val capabilities =
-            connectivityManager.getNetworkCapabilities(network)
-
-        val hasInternet =
-            capabilities?.hasCapability(
-                NetworkCapabilities.NET_CAPABILITY_INTERNET
-            ) == true
-
-        if (!hasInternet) {
-            return Result.retry()
+        if (!DriveBackupManager.isConfigured(applicationContext)) {
+            // The periodic job is registered at first app launch. It becomes
+            // active after the user chooses a Drive folder once.
+            return Result.success()
         }
 
-        // Получаем базу данных и DAO.
-        val database =
-            TerminDatabase.getDatabase(applicationContext)
-
-        val dao =
-            database.terminDao()
-
-        // Пытаемся получить уже выданный Google Drive access token
-        // без показа окна авторизации.
-        val accessToken =
-            GoogleDriveAuth().getAccessTokenSilently(
-                applicationContext
-            )
-
-        if (accessToken == null) {
-            return Result.retry()
-        }
-
-        // Создаём и загружаем резервную копию.
-        val success =
-            GoogleDriveBackup.createBackup(
-                dao = dao,
-                accessToken = accessToken
-            )
-
-        return if (success) {
+        return try {
+            DriveBackupManager.performBackup(applicationContext)
             Result.success()
-        } else {
+        } catch (e: SecurityException) {
+            // The folder was revoked; retrying cannot restore its permission.
+            Result.failure()
+        } catch (e: Exception) {
+            // Network/provider failures are transient and WorkManager backs off.
             Result.retry()
         }
     }

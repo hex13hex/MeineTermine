@@ -36,6 +36,8 @@ object DriveBackupManager {
         context: Context,
         uri: Uri
     ) {
+        val previousUri = getFolderUri(context)
+
         context
             .getSharedPreferences(
                 PREFERENCES_NAME,
@@ -44,6 +46,19 @@ object DriveBackupManager {
             .edit()
             .putString(FOLDER_URI_KEY, uri.toString())
             .apply()
+
+        if (previousUri != null && previousUri != uri) {
+            val flags =
+                android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                        android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+
+            runCatching {
+                context.contentResolver.releasePersistableUriPermission(
+                    previousUri,
+                    flags
+                )
+            }
+        }
 
         BackupScheduler.schedule(context)
         BackupScheduler.enqueueImmediate(context)

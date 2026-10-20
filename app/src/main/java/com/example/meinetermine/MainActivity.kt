@@ -820,17 +820,21 @@ fun TerminListScreen(
                             }
                         )
 
-                        if (!googleDriveConnected) {
-                            DropdownMenuItem(
-                                text = {
-                                    Text("Выбрать папку Google Drive")
-                                },
-                                onClick = {
-                                    menuExpanded = false
-                                    onGoogleDriveClick()
-                                }
-                            )
-                        }
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    if (googleDriveConnected) {
+                                        "Изменить папку Google Drive"
+                                    } else {
+                                        "Выбрать папку Google Drive"
+                                    }
+                                )
+                            },
+                            onClick = {
+                                menuExpanded = false
+                                onGoogleDriveClick()
+                            }
+                        )
 
                         if (googleDriveConnected) {
                             DropdownMenuItem(

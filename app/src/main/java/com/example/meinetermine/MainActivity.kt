@@ -82,6 +82,11 @@ import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.EventAvailable
 import android.widget.Toast
+import androidx.work.WorkInfo
+import androidx.work.WorkManager
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.text.style.TextAlign
 
 fun isTimeConflict(
     newTime: String,
@@ -117,6 +122,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
 
         BackupScheduler.schedule(applicationContext)
+        TelegramReportScheduler.schedule(applicationContext)
 
         database = TerminDatabase.getDatabase(this)
 
@@ -180,6 +186,8 @@ fun App(dao: TerminDao) {
 
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
+
+    var telegramSending by rememberSaveable { mutableStateOf(false) }
 
     var googleDriveConnected by remember {
         mutableStateOf(DriveBackupManager.isConfigured(context))
@@ -460,6 +468,78 @@ fun App(dao: TerminDao) {
         TerminListScreen(
             termine = termine,
             googleDriveConnected = googleDriveConnected,
+            telegramSending = telegramSending,
+
+            onTelegramSendClick = {
+                if (AppConfig.TELEGRAM_BOT_TOKEN.isBlank() ||
+                    AppConfig.TELEGRAM_RECIPIENT_IDS.isEmpty()
+                ) {
+                    Toast.makeText(
+                        context,
+                        "Сначала настройте токен бота и ID получателей в AppConfig.kt.",
+                        Toast.LENGTH_LONG
+                    ).show()
+                } else if (!telegramSending) {
+                    telegramSending = true
+                    val workId = TelegramReportScheduler.sendNow(context.applicationContext)
+
+                    val workLiveData = WorkManager
+                        .getInstance(context.applicationContext)
+                        .getWorkInfoByIdLiveData(workId)
+
+                    workLiveData.observe(lifecycleOwner) { info ->
+                        if (info == null) return@observe
+
+                        when (info.state) {
+                            WorkInfo.State.SUCCEEDED -> {
+                                telegramSending = false
+                                Toast.makeText(
+                                    context,
+                                    "Термины успешно отправлены в Telegram.",
+                                    Toast.LENGTH_LONG
+                                ).show()
+                                workLiveData.removeObservers(lifecycleOwner)
+                            }
+
+                            WorkInfo.State.FAILED -> {
+                                telegramSending = false
+                                val error = info.outputData.getString("error")
+                                    ?: "Проверьте токен бота, ID получателей и доступ к Telegram."
+
+                                Toast.makeText(
+                                    context,
+                                    "Ошибка Telegram: $error",
+                                    Toast.LENGTH_LONG
+                                ).show()
+                                workLiveData.removeObservers(lifecycleOwner)
+                            }
+
+                            WorkInfo.State.CANCELLED -> {
+                                telegramSending = false
+                                Toast.makeText(
+                                    context,
+                                    "Отправка отменена.",
+                                    Toast.LENGTH_LONG
+                                ).show()
+                                workLiveData.removeObservers(lifecycleOwner)
+                            }
+
+                            else -> Unit
+                        }
+                    }
+
+                    Toast.makeText(
+                        context,
+                        "Отправка поставлена в очередь.",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                    Toast.makeText(
+                        context,
+                        "Отправка поставлена в очередь.",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+            },
 
             onAddClick = {
                 editingTermin = null
@@ -739,6 +819,8 @@ fun TerminListScreen(
     onStatisticsClick: () -> Unit,
     onGoogleDriveClick: () -> Unit,
     onGoogleDriveBackupClick: () -> Unit,
+    onTelegramSendClick: () -> Unit,
+    telegramSending: Boolean,
 ) {
 
     Scaffold(
@@ -870,14 +952,28 @@ fun TerminListScreen(
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(innerPadding),
-
+                    .padding(innerPadding)
+                    .padding(24.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
-
                 verticalArrangement = Arrangement.Center
             ) {
-
                 Text("Терминов пока нет")
+                Spacer(modifier = Modifier.height(16.dp))
+                Button(
+                    onClick = onTelegramSendClick,
+                    enabled = !telegramSending,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    if (telegramSending) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.padding(end = 8.dp),
+                            strokeWidth = 2.dp
+                        )
+                        Text("Отправка в Telegram…")
+                    } else {
+                        Text("Отправить термины в Telegram")
+                    }
+                }
             }
 
         } else {
@@ -920,6 +1016,25 @@ fun TerminListScreen(
                             )
                         )
                     }
+                }
+
+                item {
+                    Button(
+                        onClick = onTelegramSendClick,
+                        enabled = !telegramSending,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        if (telegramSending) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.padding(end = 8.dp),
+                                strokeWidth = 2.dp
+                            )
+                            Text("Отправка в Telegram…")
+                        } else {
+                            Text("Отправить термины в Telegram")
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(12.dp))
                 }
 
                 if (todayTermine.isNotEmpty()) {

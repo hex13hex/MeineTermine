@@ -32,6 +32,9 @@ import androidx.lifecycle.lifecycleScope
 import com.example.meinetermine.ui.theme.MeineTermineTheme
 import kotlinx.coroutines.launch
 import java.util.Calendar
+import java.time.LocalDate
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 import androidx.compose.material3.AlertDialog
 import android.Manifest
 import android.content.pm.PackageManager
@@ -1238,6 +1241,18 @@ fun TerminListScreen(
     }
 }
 
+
+fun formatTerminDateWithWeekday(date: String): String = runCatching {
+    val parsedDate = LocalDate.parse(
+        date,
+        DateTimeFormatter.ofPattern("dd.MM.uuuu")
+    )
+
+    parsedDate.format(
+        DateTimeFormatter.ofPattern("EEEE, dd.MM.uuuu", Locale("ru"))
+    ).replaceFirstChar { it.titlecase(Locale("ru")) }
+}.getOrDefault(date)
+
 @Composable
 fun TerminCard(
     termin: TerminEntity,
@@ -1281,11 +1296,23 @@ fun TerminCard(
         Column(
             modifier = Modifier.padding(16.dp)
         ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                val formattedDate = formatTerminDateWithWeekday(termin.date)
+                val parts = formattedDate.split(", ", limit = 2)
 
-            Text(
-                text = termin.date,
-                style = MaterialTheme.typography.titleMedium
-            )
+                Text(
+                    text = parts.getOrElse(0) { "" },
+                    style = MaterialTheme.typography.titleMedium,
+                    color = Color.Gray
+                )
+
+                Text(
+                    text = if (parts.size > 1) ", ${parts[1]}" else "",
+                    style = MaterialTheme.typography.titleMedium
+                )
+            }
 
             Spacer(
                 modifier = Modifier.height(4.dp)
